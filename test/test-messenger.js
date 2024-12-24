@@ -34,7 +34,7 @@ const stringifyCert = function (cert) {
 }
 
 // Decrypt a message using the government secret key
-const govDecrypt = async function (secret, [header, ct]) {
+const govDecrypt = async function (secret, [header, ct, ctGov]) {
   // headers MUST have the field "vGov"!!!
   let govKey = await computeDH(secret, header.vGov)
   govKey = await HMACtoAESKey(govKey, govEncryptionDataStr)
@@ -44,7 +44,7 @@ const govDecrypt = async function (secret, [header, ct]) {
   const mk = await decryptWithGCM(govKey, header.cGov, header.ivGov)
   const subtleMK = await subtle.importKey('raw', mk, 'AES-GCM', true, ['encrypt', 'decrypt'])
 
-  const plaintext = await decryptWithGCM(subtleMK, ct, header.receiverIV, JSON.stringify(header))
+  const plaintext = await decryptWithGCM(subtleMK, ctGov, header.receiverIV)
   return bufferToString(plaintext)
 }
 

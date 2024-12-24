@@ -1,9 +1,11 @@
 'use strict'
 
 /** ******* Imports ********/
+const { webcrypto: crypto } = require('crypto')
+const { subtle } = crypto
 
 const {
-  /* The following functions are all the cryptographic
+  /* The following functions are all of the cryptographic
   primatives that you should need for this assignment.
   See lib.js for details on usage. */
   bufferToString,
@@ -35,6 +37,7 @@ class MessengerClient {
     this.conns = {} // data for each active connection
     this.certs = {} // certificates of other users
     this.EGKeyPair = {} // keypair from generateCertificate
+    this.receivedMessages = new Map()
   }
 
   /**
@@ -46,121 +49,154 @@ class MessengerClient {
    *
    * Return Type: certificate object/dictionary
    */
-  async generateCertificate (username) {
-    // Generate ElGamal key pair
-    this.EGKeyPair = await generateEG()
 
-    // Return certificate with serialized public key
+  async generateCertificate (username) {
+    this.EGKeyPair = await generateEG()
     return {
       username,
-      publicKey: await cryptoKeyToJSON(this.EGKeyPair.pub)
+      pubKey: await cryptoKeyToJSON(this.EGKeyPair.pub)
     }
   }
 
   /**
- * Receive and store another user's certificate.
- *
- * Arguments:
- *   certificate: certificate object/dictionary
- *   signature: ArrayBuffer
- *
- * Return Type: void
- */
+   * Receive and store another user's certificate.
+   *
+   * Arguments:
+   *   certificate: certificate object/dictionary
+   *   signature: ArrayBuffer
+   *
+   * Return Type: void
+   */
+
   async receiveCertificate (certificate, signature) {
-    // Verify the certificate using CA's public key
     const certString = JSON.stringify(certificate)
-    const isValid = await verifyWithECDSA(this.caPublicKey, certString, signature);
+    const isValid = await verifyWithECDSA(this.caPublicKey, certString, signature)
     if (!isValid) {
-      throw new Error('Invalid certificate signature!')
+      throw new Error('Invalid certificate signature')
     }
-
-    // Store the certificate
-    this.certs[certificate.username] = {
-      username: certificate.username,
-      publicKey: certificate.publicKey
-    }
+    this.certs[certificate.username] = certificate
   }
 
   /**
- * Generate the message to be sent to another user.
- *
- * Arguments:
- *   name: string
- *   plaintext: string
- *
- * Return Type: Tuple of [dictionary, ArrayBuffer]
- */
+   * Generate the message to be sent to another user.
+   *
+   * Arguments:
+   *   name: string
+   *   plaintext: string
+   *
+   * Return Type: Tuple of [dictionary, ArrayBuffer]
+   */
   async sendMessage (name, plaintext) {
-    // Fetch recipient's certificate
-    const receiverCert = this.certs[name]
-    if (!receiverCert) throw new Error(`Certificate for ${name} not found`)
-
-    // First message setup: Compute DH shared secret and initialize keys
-    if (!this.conns[name]) {
-      const sharedSecret = await computeDH(this.EGKeyPair.sec, receiverCert.publicKey)
-      const rootKey = await HMACtoAESKey(sharedSecret, 'init')
-      this.conns[name] = { sendingKey: rootKey }
+    if (!this.certs[name]) {
+      throw new Error(`Certificate for user ${name} does not exist.`)
     }
+    const recipientCert = this.certs[name]
 
-    const conn = this.conns[name]
+    const recipientPublicKey = await subtle.importKey(
+      'jwk',
+      recipientCert.pubKey,
+      { name: 'ECDH', namedCurve: 'P-384' },
+      true,
+      []
+    )
 
-    // Generate a random IV and derive the message key
-    const iv = genRandomSalt()
-    const messageKey = await HMACtoAESKey(conn.sendingKey, 'message-key')
+    // Import government public key
+    const vGovKeyJWK = await cryptoKeyToJSON(this.govPublicKey)
+    const vGovKey = await subtle.importKey(
+      'jwk',
+      vGovKeyJWK,
+      { name: 'ECDH', namedCurve: 'P-384' },
+      true,
+      []
+    )
+    // console.debug('vGovKey', vGovKeyJWK, vGovKey)
 
-    // Encrypt the message
-    const ciphertext = await encryptWithGCM(messageKey, plaintext, iv, '')
+    // Import own public key for session key of encryption
+    const vGovJWK = await cryptoKeyToJSON(this.EGKeyPair.pub)
+    const vGov = await subtle.importKey(
+      'jwk',
+      vGovJWK,
+      { name: 'ECDH', namedCurve: 'P-384' },
+      true,
+      []
+    )
 
-    // Ratchet the sending key
-    conn.sendingKey = await HMACtoHMACKey(conn.sendingKey, 'ratchet')
+    // Encrypt with government key
+    const ivGov = genRandomSalt(12)
+    let govKey = await computeDH(this.EGKeyPair.sec, vGovKey)
+    govKey = await HMACtoAESKey(govKey, govEncryptionDataStr)
+    const govKeyBuffer = await subtle.exportKey('raw', govKey)
+    const cGov = await encryptWithGCM(govKey, govKeyBuffer, ivGov)
 
-    // Encrypt the sending key for the government
-    const govSharedKey = await computeDH(this.EGKeyPair.sec, this.govPublicKey)
-    const govAESKey = await HMACtoAESKey(govSharedKey, govEncryptionDataStr)
-    const ivGov = genRandomSalt()
-    const encryptedKeyForGov = await encryptWithGCM(govAESKey, await cryptoKeyToJSON(conn.sendingKey), ivGov, '')
+    // Encrypt message
+    const sharedSecret = await computeDH(this.EGKeyPair.sec, recipientPublicKey)
+    const aesKey = await HMACtoAESKey(sharedSecret, govEncryptionDataStr)
+    const iv = genRandomSalt(12)
+    const ciphertext = await encryptWithGCM(aesKey, plaintext, iv)
 
-    // Build the message header
+    // Encrypt message for government
+    const ctinGOV = await encryptWithGCM(govKey, plaintext, iv)
+
     const header = {
+      iv,
+      sender: JSON.stringify(await cryptoKeyToJSON(this.EGKeyPair.pub)),
+      cGov,
+      vGov,
       ivGov,
-      cGov: encryptedKeyForGov,
-      receiverIV: iv
+      receiverIV: iv,
+      timestamp: Date.now()
     }
-
-    return [header, ciphertext]
+    return [header, ciphertext, ctinGOV]
   }
 
   /**
- * Decrypt a message received from another user.
- *
- * Arguments:
- *   name: string
- *   [header, ciphertext]: Tuple of [dictionary, ArrayBuffer]
- *
- * Return Type: string
- */
-  async receiveMessage (name, [header, ciphertext]) {
-    // Fetch sender's certificate
+   * Decrypt a message received from another user.
+   *
+   * Arguments:
+   *   name: string
+   *   [header, ciphertext]: Tuple of [dictionary, ArrayBuffer]
+   *
+   * Return Type: string
+   */
+  async receiveMessage (name, [header, ciphertext, ctinGOV]) {
     const senderCert = this.certs[name]
-    if (!senderCert) throw new Error(`Certificate for ${name} not found`)
-
-    // First message setup: Compute DH shared secret and initialize keys
-    if (!this.conns[name]) {
-      const sharedSecret = await computeDH(this.EGKeyPair.sec, senderCert.publicKey)
-      const rootKey = await HMACtoAESKey(sharedSecret, 'init')
-      this.conns[name] = { receivingKey: rootKey }
+    if (!senderCert) {
+      throw new Error('Sender certificate not found')
     }
 
-    const conn = this.conns[name]
+    // Detect replay attacks
+    const messageId = `${header.sender}-${header.iv}-${header.timestamp}`
+    const currentTime = Date.now()
+    const oneYearInMillis = 7 * 24 * 60 * 60 * 1000
 
-    // Derive the message key and decrypt the message
-    const messageKey = await HMACtoAESKey(conn.receivingKey, 'message-key')
-    const plaintextBuffer = await decryptWithGCM(messageKey, ciphertext, header.receiverIV, '')
+    // Clean up old messages
+    for (const [id, timestamp] of this.receivedMessages) {
+      if (currentTime - timestamp > oneYearInMillis) {
+        this.receivedMessages.delete(id)
+      }
+    }
 
-    // Ratchet the receiving key
-    conn.receivingKey = await HMACtoHMACKey(conn.receivingKey, 'ratchet')
+    if (this.receivedMessages.has(messageId)) {
+      throw new Error('Replay attack detected')
+    }
+    this.receivedMessages.set(messageId, currentTime)
 
-    return bufferToString(plaintextBuffer)
+    // Import sender public key
+    const senderPubKey = await subtle.importKey(
+      'jwk',
+      senderCert.pubKey,
+      { name: 'ECDH', namedCurve: 'P-384' },
+      true,
+      []
+    )
+
+    const sharedSecret = await computeDH(this.EGKeyPair.sec, senderPubKey)
+    const aesKey = await HMACtoAESKey(sharedSecret, govEncryptionDataStr)
+
+    const plaintextBuffer = await decryptWithGCM(aesKey, ciphertext, header.iv)
+    const plaintext = bufferToString(plaintextBuffer)
+
+    return plaintext
   }
 };
 

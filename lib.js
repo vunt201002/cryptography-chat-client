@@ -3,6 +3,8 @@
 const crypto = require('node:crypto')
 const { subtle } = require('node:crypto').webcrypto
 
+const decoder = new TextDecoder()
+
 /// ////////////////////////////////////////////////////////////////////////////////
 // Cryptographic Primitives
 //
@@ -40,6 +42,16 @@ async function cryptoKeyToJSON (cryptoKey) {
   return key
 }
 
+async function jsonToCryptoKey (jwk, algorithm, usages) {
+  return await subtle.importKey(
+    'jwk', // Key format
+    jwk, // The JSON Web Key
+    algorithm, // Algorithm details
+    true, // Extractable (set to true for exportability)
+    usages // Key usages: ['encrypt', 'decrypt'], ['sign', 'verify'], etc.
+  )
+}
+
 async function generateEG () {
   // returns a pair of ElGamal keys as an object
   // private key is keypairObject.sec
@@ -74,7 +86,6 @@ async function HMACtoAESKey (key, data, exportToArrayBuffer = false) {
   // if exportToArrayBuffer is true, return key as ArrayBuffer. Otherwise, output CryptoKey
   // key is a CryptoKey
   // data is a string
-
   // first compute HMAC output
   const hmacBuf = await subtle.sign({ name: 'HMAC' }, key, Buffer.from(data))
 
@@ -182,11 +193,22 @@ async function signWithECDSA (privateKey, message) {
   return await subtle.sign({ name: 'ECDSA', hash: { name: 'SHA-384' } }, privateKey, Buffer.from(message))
 }
 
+async function exportKeyToRaw (cryptoKey) {
+  return await subtle.exportKey('raw', cryptoKey)
+}
+
+function byteArrayToString (arr) {
+  // Converts from ArrayBuffer to string
+  // Used to go from output of decryptWithGCM to string
+  return decoder.decode(arr)
+}
+
 module.exports = {
   govEncryptionDataStr,
   bufferToString,
   genRandomSalt,
   cryptoKeyToJSON,
+  jsonToCryptoKey,
   generateEG,
   computeDH,
   verifyWithECDSA,
@@ -196,5 +218,8 @@ module.exports = {
   encryptWithGCM,
   decryptWithGCM,
   generateECDSA,
-  signWithECDSA
+  signWithECDSA,
+  subtle,
+  exportKeyToRaw,
+  byteArrayToString
 }
