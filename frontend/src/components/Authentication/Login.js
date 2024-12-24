@@ -8,6 +8,7 @@ import { useToast } from '@chakra-ui/react'
 import { useHistory } from 'react-router-dom'
 import { ChatState } from '../../Context/ChatProvider'
 import axiosInstance from '../../axiosConfig/axiosInstance'
+import { generateECDSA } from '../../../../lib'
 
 const Login = () => {
   const [show, setShow] = useState(false)
@@ -47,6 +48,8 @@ const Login = () => {
         config
       )
 
+      const caKeyPair = await generateECDSA()
+
       toast({
         title: 'Login Successful',
         status: 'success',
@@ -54,8 +57,8 @@ const Login = () => {
         isClosable: true,
         position: 'bottom'
       })
-      setUser(data)
-      localStorage.setItem('userInfo', JSON.stringify(data))
+      setUser({...data, caKeyPair})
+      localStorage.setItem('userInfo', JSON.stringify(...data, caKeyPair))
       setLoading(false)
       history.push('/chats')
     } catch (error) {

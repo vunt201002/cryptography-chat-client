@@ -1,22 +1,27 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useHistory } from 'react-router-dom'
+import { generateEG } from '../../../lib'
 
-const ChatContext = createContext()
+const ChatContext = createContext(null)
 
 const ChatProvider = ({ children }) => {
   const [selectedChat, setSelectedChat] = useState()
   const [user, setUser] = useState()
   const [notification, setNotification] = useState([])
   const [chats, setChats] = useState()
+  const [govKeyPair, setGovKeyPair] = useState({})
 
   const history = useHistory()
+
+  useEffect(() => {
+    generateEG().then(data => setGovKeyPair(data))
+  }, [])
 
   useEffect(() => {
     const userInfo = JSON.parse(localStorage.getItem('userInfo'))
     setUser(userInfo)
 
     if (!userInfo) history.push('/')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history])
 
   return (
@@ -29,7 +34,8 @@ const ChatProvider = ({ children }) => {
         notification,
         setNotification,
         chats,
-        setChats
+        setChats,
+        govKeyPair
       }}
     >
       {children}

@@ -73,6 +73,7 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
 
   const sendMessage = async (event) => {
     if (event.key === 'Enter' && newMessage) {
+      console.log(user)
       socket.emit('stop typing', selectedChat._id)
       try {
         const config = {
@@ -82,6 +83,9 @@ const SingleChat = ({ fetchAgain, setFetchAgain }) => {
           }
         }
         setNewMessage('')
+
+
+
         const { data } = await axiosInstance.post(
           '/api/message',
           {
