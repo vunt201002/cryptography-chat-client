@@ -8,7 +8,8 @@ import { useToast } from '@chakra-ui/react'
 import { useHistory } from 'react-router-dom'
 import { ChatState } from '../../Context/ChatProvider'
 import axiosInstance from '../../axiosConfig/axiosInstance'
-import { generateECDSA } from '../../../../lib'
+import { cryptoKeyToJSON, generateECDSA } from '../../../../lib'
+import { MessengerClient } from '../../../../messenger'
 
 const Login = () => {
   const [show, setShow] = useState(false)
@@ -19,7 +20,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false)
 
   const history = useHistory()
-  const { setUser } = ChatState()
+  const { setUser, govKeyPair } = ChatState()
 
   const submitHandler = async () => {
     setLoading(true)
@@ -49,7 +50,8 @@ const Login = () => {
       )
 
       const caKeyPair = await generateECDSA()
-
+      const messageClient = new MessengerClient(caKeyPair.pub, govKeyPair.pub)
+      console.log(messageClient)
       toast({
         title: 'Login Successful',
         status: 'success',
@@ -57,8 +59,8 @@ const Login = () => {
         isClosable: true,
         position: 'bottom'
       })
-      setUser({...data, caKeyPair})
-      localStorage.setItem('userInfo', JSON.stringify(...data, caKeyPair))
+      setUser({ ...data, caKeyPair, messageClient })
+      localStorage.setItem('userInfo', JSON.stringify({ ...data, caKeyPair, messageClient }))
       setLoading(false)
       history.push('/chats')
     } catch (error) {

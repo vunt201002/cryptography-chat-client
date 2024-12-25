@@ -1,7 +1,17 @@
 'use strict'
 
-const crypto = require('node:crypto')
-const { subtle } = require('node:crypto').webcrypto
+let crypto;
+let subtle;
+
+if (typeof window === "undefined") {
+  // Node.js environment
+  crypto = require('crypto');
+  subtle = crypto.webcrypto.subtle;
+} else {
+  // Browser environment, use Web Crypto API directly
+  subtle = window.crypto.subtle;
+}
+
 
 const decoder = new TextDecoder()
 

@@ -1,8 +1,18 @@
 'use strict'
 
 /** ******* Imports ********/
-const { webcrypto: crypto } = require('crypto')
-const { subtle } = crypto
+let crypto;
+let subtle;
+
+if (typeof window === "undefined") {
+  // Node.js environment
+  crypto = require('crypto');
+  subtle = crypto.webcrypto.subtle;
+} else {
+  // Browser environment, use Web Crypto API directly
+  subtle = window.crypto.subtle;
+}
+
 
 const {
   /* The following functions are all of the cryptographic
